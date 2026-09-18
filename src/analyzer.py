@@ -43,27 +43,158 @@ SVM_PATH = os.path.join(
     "svm.joblib"
 )
 
+SIMILARITY_THRESHOLD = 0.15
+
 
 def load_resources():
 
-    df = pd.read_csv(DATA_PATH)
+    df = pd.read_csv(
+        DATA_PATH
+    )
 
-    df = prepare_dataset(df)
+    df = prepare_dataset(
+        df
+    )
 
-    tfidf = joblib.load(TFIDF_PATH)
+    tfidf = joblib.load(
+        TFIDF_PATH
+    )
 
-    svm_model = joblib.load(SVM_PATH)
-
-    ticket_vectors = tfidf.transform(
-        df["clean_text"]
+    svm_model = joblib.load(
+        SVM_PATH
     )
 
     return (
         df,
         tfidf,
-        svm_model,
-        ticket_vectors
+        svm_model
     )
+
+
+def calculate_similarity(
+    subject,
+    body,
+    historical_df,
+    tfidf
+):
+
+    historical_subjects = (
+        historical_df["subject"]
+        .fillna("")
+        .astype(str)
+    )
+
+    historical_bodies = (
+        historical_df["body"]
+        .fillna("")
+        .astype(str)
+    )
+
+    subject_vectors = tfidf.transform(
+        historical_subjects
+    )
+
+    body_vectors = tfidf.transform(
+        historical_bodies
+    )
+
+    new_subject_vector = tfidf.transform(
+        [subject]
+    )
+
+    new_body_vector = tfidf.transform(
+        [body]
+    )
+
+    subject_similarity = cosine_similarity(
+        new_subject_vector,
+        subject_vectors
+    )[0]
+
+    body_similarity = cosine_similarity(
+        new_body_vector,
+        body_vectors
+    )[0]
+
+    combined_similarity = (
+        0.60 * subject_similarity
+        +
+        0.40 * body_similarity
+    )
+
+    return combined_similarity
+
+
+def retrieve_similar_tickets(
+    subject,
+    body,
+    language,
+    predicted_queue,
+    df,
+    tfidf,
+    top_k=3
+):
+
+    queue_df = df[
+        df["queue"] == predicted_queue
+    ].copy()
+
+    language_df = queue_df[
+        queue_df["language"] == language
+    ].copy()
+
+    if not language_df.empty:
+
+        candidate_df = language_df
+
+    else:
+
+        candidate_df = queue_df
+
+    if candidate_df.empty:
+
+        return []
+
+    similarities = calculate_similarity(
+        subject,
+        body,
+        candidate_df,
+        tfidf
+    )
+
+    candidate_df = candidate_df.copy()
+
+    candidate_df["similarity"] = (
+        similarities
+    )
+
+    candidate_df = candidate_df.sort_values(
+        "similarity",
+        ascending=False
+    )
+
+    candidate_df = candidate_df.head(
+        top_k
+    )
+
+    results = []
+
+    for _, row in candidate_df.iterrows():
+
+        results.append({
+            "similarity": float(
+                row["similarity"]
+            ),
+            "subject": row["subject"],
+            "body": row["body"],
+            "queue": row["queue"],
+            "priority": row["priority"],
+            "type": row["type"],
+            "language": row["language"],
+            "answer": row["answer"]
+        })
+
+    return results
 
 
 def analyze_ticket(
@@ -76,12 +207,19 @@ def analyze_ticket(
     (
         df,
         tfidf,
-        svm_model,
-        ticket_vectors
+        svm_model
     ) = load_resources()
 
     full_text = (
         f"{subject} {body}"
+    )
+
+    sentiment_result = analyze_sentiment(
+        full_text
+    )
+
+    entities = extract_entities(
+        full_text
     )
 
     ticket_df = pd.DataFrame([{
@@ -95,6 +233,17 @@ def analyze_ticket(
         ticket_df
     )
 
+    if processed_ticket.empty:
+
+        return {
+            "queue": "Out of Domain",
+            "sentiment": sentiment_result,
+            "entities": entities,
+            "similar_tickets": [],
+            "suggested_resolution":
+                "Unable to analyze the ticket."
+        }
+
     clean_text = processed_ticket[
         "clean_text"
     ].iloc[0]
@@ -103,64 +252,60 @@ def analyze_ticket(
         [clean_text]
     )
 
+    if vector.nnz == 0:
+
+        return {
+            "queue": "Out of Domain",
+            "sentiment": sentiment_result,
+            "entities": entities,
+            "similar_tickets": [],
+            "suggested_resolution":
+                "The ticket does not appear to "
+                "contain terms related to the IT "
+                "helpdesk dataset. Please enter an "
+                "IT-related issue."
+        }
+
     predicted_queue = svm_model.predict(
         vector
     )[0]
 
-    sentiment_result = analyze_sentiment(
-        full_text
+    similar_tickets = retrieve_similar_tickets(
+        subject,
+        body,
+        language,
+        predicted_queue,
+        df,
+        tfidf,
+        top_k
     )
-
-    entities = extract_entities(
-        full_text
-    )
-
-    queue_mask = (
-        df["queue"] == predicted_queue
-    )
-
-    filtered_df = df[
-        queue_mask
-    ].copy()
-
-    filtered_vectors = ticket_vectors[
-        queue_mask.values
-    ]
-
-    similarities = cosine_similarity(
-        vector,
-        filtered_vectors
-    )[0]
-
-    top_indices = similarities.argsort()[
-        ::-1
-    ][:top_k]
-
-    similar_tickets = []
-
-    for index in top_indices:
-
-        row = filtered_df.iloc[index]
-
-        similar_tickets.append({
-            "similarity": float(
-                similarities[index]
-            ),
-            "subject": row["subject"],
-            "body": row["body"],
-            "queue": row["queue"],
-            "priority": row["priority"],
-            "type": row["type"],
-            "language": row["language"],
-            "answer": row["answer"]
-        })
 
     suggested_resolution = ""
 
     if similar_tickets:
 
+        best_similarity = (
+            similar_tickets[0]["similarity"]
+        )
+
+        if best_similarity >= SIMILARITY_THRESHOLD:
+
+            suggested_resolution = (
+                similar_tickets[0]["answer"]
+            )
+
+        else:
+
+            suggested_resolution = (
+                "No sufficiently similar "
+                "historical ticket was found. "
+                "Please review the ticket manually."
+            )
+
+    else:
+
         suggested_resolution = (
-            similar_tickets[0]["answer"]
+            "No similar historical tickets found."
         )
 
     return {
@@ -225,7 +370,9 @@ if __name__ == "__main__":
 
     else:
 
-        print("  No entities found.")
+        print(
+            "  No entities found."
+        )
 
     print(
         "\nSuggested Resolution:"
@@ -239,33 +386,47 @@ if __name__ == "__main__":
     print("SIMILAR HISTORICAL TICKETS")
     print("=" * 80)
 
-    for i, ticket in enumerate(
-        result["similar_tickets"],
-        start=1
-    ):
-
-        print("\n" + "-" * 80)
+    if not result["similar_tickets"]:
 
         print(
-            f"Similar Ticket #{i}"
+            "\nNo similar tickets found."
         )
 
-        print(
-            f"Similarity: "
-            f"{ticket['similarity'] * 100:.2f}%"
-        )
+    else:
 
-        print(
-            "Subject:",
-            ticket["subject"]
-        )
+        for i, ticket in enumerate(
+            result["similar_tickets"],
+            start=1
+        ):
 
-        print(
-            "Priority:",
-            ticket["priority"]
-        )
+            print("\n" + "-" * 80)
 
-        print(
-            "Type:",
-            ticket["type"]
-        )
+            print(
+                f"Similar Ticket #{i}"
+            )
+
+            print(
+                f"Similarity: "
+                f"{ticket['similarity'] * 100:.2f}%"
+            )
+
+            print(
+                "Subject:",
+                ticket["subject"]
+            )
+
+            print(
+                "Priority:",
+                ticket["priority"]
+            )
+
+            print(
+                "Type:",
+                ticket["type"]
+            )
+
+            print(
+                "Language:",
+                ticket["language"]
+            )
+            
