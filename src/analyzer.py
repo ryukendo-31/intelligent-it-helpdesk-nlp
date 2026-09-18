@@ -29,6 +29,8 @@ SRC_DIR = os.path.dirname(
 sys.path.insert(0, SRC_DIR)
 
 from preprocessing import prepare_dataset
+from sentiment import analyze_sentiment
+from ner import extract_entities
 
 
 TFIDF_PATH = os.path.join(
@@ -78,6 +80,10 @@ def analyze_ticket(
         ticket_vectors
     ) = load_resources()
 
+    full_text = (
+        f"{subject} {body}"
+    )
+
     ticket_df = pd.DataFrame([{
         "subject": subject,
         "body": body,
@@ -100,6 +106,14 @@ def analyze_ticket(
     predicted_queue = svm_model.predict(
         vector
     )[0]
+
+    sentiment_result = analyze_sentiment(
+        full_text
+    )
+
+    entities = extract_entities(
+        full_text
+    )
 
     queue_mask = (
         df["queue"] == predicted_queue
@@ -151,6 +165,8 @@ def analyze_ticket(
 
     return {
         "queue": predicted_queue,
+        "sentiment": sentiment_result,
+        "entities": entities,
         "similar_tickets": similar_tickets,
         "suggested_resolution":
             suggested_resolution
@@ -187,12 +203,41 @@ if __name__ == "__main__":
     )
 
     print(
+        "\nSentiment:",
+        result["sentiment"]["sentiment"]
+    )
+
+    print(
+        "Sentiment Score:",
+        result["sentiment"]["score"]
+    )
+
+    print("\nNamed Entities:")
+
+    if result["entities"]:
+
+        for entity in result["entities"]:
+
+            print(
+                f"  {entity['text']} "
+                f"-> {entity['label']}"
+            )
+
+    else:
+
+        print("  No entities found.")
+
+    print(
         "\nSuggested Resolution:"
     )
 
     print(
         result["suggested_resolution"]
     )
+
+    print("\n" + "=" * 80)
+    print("SIMILAR HISTORICAL TICKETS")
+    print("=" * 80)
 
     for i, ticket in enumerate(
         result["similar_tickets"],

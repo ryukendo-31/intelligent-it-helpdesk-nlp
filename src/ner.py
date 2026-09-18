@@ -14,7 +14,7 @@ PATTERNS = {
 
     "SOFTWARE": r"\b(?:Zoom|Chrome|Firefox|Microsoft\s+Office|Outlook|Teams|Windows|macOS|Android|iOS)\b",
 
-    "DEVICE_MODEL": r"\b(?:Dell|HP|Lenovo|Apple|Samsung|Microsoft|Asus|Acer)\s+[A-Za-z0-9]+(?:\s+[A-Za-z0-9]+){0,3}\b",
+    "DEVICE_MODEL": r"\b(?:Dell|HP|Lenovo|Apple|Samsung|Microsoft|Asus|Acer)\s+[A-Za-z0-9]+(?:\s+(?:XPS|Inspiron|Latitude|Pavilion|Omen|ThinkPad|IdeaPad|MacBook|Surface|Galaxy))?\b",
 
     "DEVICE_TYPE": r"\b(?:laptop|desktop|computer|keyboard|mouse|monitor|screen|headphones|headset|speaker|speakers|printer|scanner|phone|tablet|router|modem|charger|webcam|microphone)\b",
 
